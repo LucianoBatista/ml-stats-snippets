@@ -1,0 +1,255 @@
+---
+title: "Linear Reg"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Libs
+
+```{r}
+library(MASS)
+library(tidymodels)
+library(ISLR2)
+
+```
+
+# Data
+
+The Boston data set contain various statistics for *506 neighborhoods in Boston.* We will build a simple linear regression model that related the **median value of owner-occupied homes** (`medv`) as the response with a variable indicating the **percentage of the population that belongs to a lower status** (`lstat`) as the *predictor*.
+
+# Simple Linear Regression
+
+Create a parsnip spec
+
+```{r}
+lm_spec <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm")
+
+```
+
+It is just a spec of what we want to do.
+
+We can fit the model now: y ~ x
+
+```{r}
+lm_fit <- lm_spec %>% 
+  fit(medv ~ lstat, data = Boston)
+
+lm_fit %>% 
+  pluck("fit")
+```
+
+
+The lm object has a nice summary.
+
+```{r}
+lm_fit %>% 
+  pluck("fit") %>% 
+  summary()
+
+# using broom
+tidy(lm_fit)
+
+```
+
+# Using Broom
+
+- **tidy**: returns the parameter estimates of a lm object
+- **glance**: can be used to extract the model stats
+
+```{r}
+tidy(lm_fit)
+glance(lm_fit)
+
+```
+
+
+# Prediction
+
+We need new data for that
+
+```{r}
+predict(lm_fit, new_data = Boston)
+
+```
+
+We can also return other types of predicts by specifying the type argument. Setting `type` = "conf_int" return a 95% confidence interval.
+
+```{r}
+predict(lm_fit, new_data = Boston, type = "conf_int")
+
+```
+
+If you want to evaluate the performance of a model, you might want to compare the observed value and the predicted value for a data set.
+
+```{r}
+bind_cols(
+  predict(lm_fit, new_data = Boston),
+  Boston
+) %>% 
+  select(medv, .pred)
+
+# or using augment from tune
+augment(lm_fit, new_data = Boston) %>% 
+  select(medv, .pred)
+
+```
+
+
+# Multiple Linear Regression
+
+We set the parsnip model by the same way
+
+```{r}
+lm_fit2 <- lm_spec %>% 
+  fit(medv ~ lstat + age, data = Boston)
+
+# results
+lm_fit2 %>% 
+  tidy()
+
+lm_fit2 %>% 
+  glance()
+
+predict(lm_fit2, new_data = Boston)
+
+augment(lm_fit2, new_data = Boston) %>% 
+  select(medv, .pred)
+
+```
+
+
+We can alson train the model on all the data
+
+
+```{r}
+lm_fit3 <- lm_spec %>% 
+  fit(medv ~ ., data = Boston)
+
+lm_fit3 %>% tidy()
+lm_fit3 %>% glance()
+```
+
+
+# Interaction terms
+
+The syntax used to describe interaction isn't accepted by all engines, so we'll need to use recipe as well for that.
+
+There are two ways, x:y or x * y:
+
+- x:y, will include the interaction between x and y,
+- x * y, will include the interaction between x and y, x, and y, short for `x:y + x + y`.
+
+```{r}
+lm_fit4 <- lm_spec %>% 
+  fit(medv ~ lstat * age, data = Boston)
+
+lm_fit4 %>% tidy()
+
+```
+
+Sometimes we want to perform transformations, and we want those transformations to be applied, as part of the model fit as a pre-processing step. We will use the recipes package.
+
+We use step_interact() to specify interaction term. Next we create a workflow object to combine the linear reg model spec with the pre-processing spec.
+
+```{r}
+# recipe spec
+rec_spec_interact <- recipe(medv ~ lstat + age, data = Boston) %>% 
+  step_interact(~ lstat:age)
+
+# workflow spec
+lm_wf_interact <- workflow() %>% 
+  add_model(lm_spec) %>% 
+  add_recipe(rec_spec_interact)
+
+# now we can fit the model
+lm_fit5 <- lm_wf_interact %>% fit(Boston)
+
+# this works like and other fitted model
+lm_fit5 %>% glance()
+lm_fit5 %>% tidy()
+
+```
+
+
+# Non-linear transformations of the predictors
+
+As a rule, you want to keep as much of the pre-processing inside recipes such that the transformation will be applied consistently to new data.
+
+```{r}
+rec_spec_pow2 <- recipe(medv ~ lstat, data = Boston) %>% 
+  step_mutate(lstat2 = lstat ^ 2)
+
+lm_wf_pow2 <- workflow() %>% 
+  add_model(lm_spec) %>% 
+  add_recipe(rec_spec_pow2)
+
+lm_fit6 <- lm_wf_pow2 %>% fit(Boston)
+lm_fit6 %>% glance()
+
+# log transformation
+rec_spec_log <- recipe(medv ~ lstat, data = Boston) %>% 
+  step_log(lstat) %>% 
+  step_rename(lstat_log = lstat)
+
+# log transformation make the distribution more normal
+# most of the problems are log-normal instead of just normal
+rec_spec_log %>% prep() %>% bake(new_data = NULL) %>% bind_cols(Boston %>% select(lstat_normal = lstat)) %>% 
+  ggplot(aes(
+    x = lstat_normal
+  )) +
+  geom_histogram()
+
+
+```
+
+
+# Qualitative predictors
+
+*shelving = estante*
+
+We now will look at `Carseats` dataset. Predict Sales of child car seats in 400 locations based on a number of predictors. One of these variables is `ShelveLoc` which is a qualitative predictor that indicates the quality of the shelving location.
+
+`ShelveLoc` takes on three possible values:
+
+- Bad
+- Medium
+- Good
+
+One convention of lm() is to convert categorical variables to dummy automatically.
+
+```{r}
+# interesting
+Carseats %>% 
+  pull(ShelveLoc) %>% 
+  contrasts()
+
+Carseats %>% count(ShelveLoc)
+Carseats %>% tibble() %>% skimr::skim()
+
+# lets fit our model
+lm_spec_cat <- lm_spec %>% 
+  fit(Sales ~ . + Income:Advertising + Price:Age, data = Carseats)
+
+lm_spec_cat %>% tidy()
+
+```
+
+Look that we have 3 levels on ShelveLoc variable, but just two was provided. This is how dummy variables works, is like one equation with 3 variables where the last variable can be set by knowing the value from the others two. And also avoid colinearity on the model.
+
+We can do the same thing using recipe (better option)
+
+```{r}
+rec_spec <- recipe(Sales ~ ., data = Carseats) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(~ Income:Advertising + Price:Age)  # follow the formula syntax
+
+lm_wf <- workflow() %>% 
+  add_model(lm_spec) %>% 
+  add_recipe(rec_spec)
+
+lm_wf %>% fit(Carseats) %>% tidy()
+```
+
